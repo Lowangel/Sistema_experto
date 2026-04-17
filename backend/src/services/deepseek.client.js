@@ -1,6 +1,12 @@
 import { env } from "../config/env.js";
 import { AppError } from "../utils/appError.js";
 
+function normalizeText(value) {
+  return typeof value === "string"
+    ? value.trim().toLowerCase().replace(/[\s_-]+/g, "")
+    : "";
+}
+
 function extractProviderError(payload) {
   if (!payload || typeof payload !== "object") {
     return {};
@@ -21,6 +27,19 @@ function extractProviderError(payload) {
 
 function buildApiError(response, payload) {
   const providerError = extractProviderError(payload);
+  const normalizedCode = normalizeText(providerError.providerCode);
+  const normalizedMessage = normalizeText(providerError.providerMessage);
+
+  const isUserNotFound =
+    normalizedCode.includes("usernotfound") ||
+    normalizedMessage.includes("usernotfound") ||
+    normalizedMessage.includes("unknownuser");
+
+  const isInvalidApiKey =
+    normalizedCode.includes("invalidapikey") ||
+    normalizedCode.includes("invalidkey") ||
+    normalizedMessage.includes("invalidapikey") ||
+    normalizedMessage.includes("invalidkey");
 
   const messageByStatus = {
     401: `${env.llmProviderName} rechazo la solicitud por autenticacion. Revisa la API key.`,
@@ -29,10 +48,16 @@ function buildApiError(response, payload) {
     429: `${env.llmProviderName} rechazo la solicitud por limite de uso. Intenta nuevamente en unos segundos.`,
   };
 
+  let message =
+    messageByStatus[response.status] ?? `${env.llmProviderName} rechazo la solicitud.`;
+
+  if (isUserNotFound || isInvalidApiKey) {
+    message = `${env.llmProviderName} rechazo la solicitud porque la API key no corresponde a una cuenta valida. Genera una nueva API key y actualizala en backend/.env.`;
+  }
+
   return new AppError(
     502,
-    messageByStatus[response.status] ??
-      `${env.llmProviderName} rechazo la solicitud.`,
+    message,
     "LLM_API_ERROR",
     {
       status: response.status,
@@ -42,7 +67,18 @@ function buildApiError(response, payload) {
   );
 }
 
-export async function callDeepSeekChat(messages) {
+async function callLlmChat(messages, { jsonMode = false, maxTokens = 900 } = {}) {
+  const body = {
+    model: env.llmModel,
+    messages,
+    stream: false,
+    max_tokens: maxTokens,
+  };
+
+  if (jsonMode) {
+    body.response_format = { type: "json_object" };
+  }
+
   const response = await fetch(`${env.llmBaseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -50,13 +86,7 @@ export async function callDeepSeekChat(messages) {
       Authorization: `Bearer ${env.llmApiKey}`,
     },
     signal: AbortSignal.timeout(env.requestTimeoutMs),
-    body: JSON.stringify({
-      model: env.llmModel,
-      messages,
-      response_format: { type: "json_object" },
-      stream: false,
-      max_tokens: 900,
-    }),
+    body: JSON.stringify(body),
   }).catch((error) => {
     if (error.name === "TimeoutError") {
       throw new AppError(
@@ -95,7 +125,7 @@ export async function callDeepSeekChat(messages) {
   if (typeof content !== "string") {
     throw new AppError(
       502,
-      `${env.llmProviderName} no devolvio contenido util para construir el diagnostico.`,
+      `${env.llmProviderName} no devolvio contenido util para procesar la solicitud.`,
       "LLM_EMPTY_CONTENT",
       payload,
     );
@@ -105,4 +135,12 @@ export async function callDeepSeekChat(messages) {
     content,
     usage: payload.usage ?? null,
   };
+}
+
+export async function callDeepSeekChat(messages) {
+  return callLlmChat(messages, { jsonMode: true, maxTokens: 900 });
+}
+
+export async function callGeneralChat(messages) {
+  return callLlmChat(messages, { jsonMode: false, maxTokens: 700 });
 }

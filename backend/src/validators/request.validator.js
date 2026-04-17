@@ -18,6 +18,7 @@ const ALLOWED_AGE_GROUPS = new Set([
 
 const ALLOWED_SEX = new Set(["femenino", "masculino", "otro"]);
 const ALLOWED_URGENCY = new Set(["baja", "media", "alta"]);
+const ALLOWED_CHAT_ROLES = new Set(["user", "assistant"]);
 
 function assertObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -140,3 +141,41 @@ export function validateDiagnosisInput(payload) {
   };
 }
 
+export function validateChatInput(payload) {
+  assertObject(payload);
+
+  const mensaje = sanitizeString(payload.mensaje, "mensaje", {
+    required: true,
+  }).slice(0, 1600);
+
+  if (payload.historial != null && !Array.isArray(payload.historial)) {
+    throw new AppError(
+      400,
+      'El campo "historial" debe ser un arreglo.',
+      "INVALID_INPUT",
+    );
+  }
+
+  const historial = (payload.historial ?? [])
+    .slice(-10)
+    .map((entry, index) => {
+      assertObject(entry);
+
+      return {
+        role: sanitizeEnum(
+          entry.role,
+          `historial[${index}].role`,
+          ALLOWED_CHAT_ROLES,
+          "user",
+        ),
+        content: sanitizeString(entry.content, `historial[${index}].content`, {
+          required: true,
+        }).slice(0, 1600),
+      };
+    });
+
+  return {
+    mensaje,
+    historial,
+  };
+}

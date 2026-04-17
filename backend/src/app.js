@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 
 import { env } from "./config/env.js";
+import chatbotRouter from "./routes/chatbot.routes.js";
 import diagnosticoRouter from "./routes/diagnostico.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
@@ -20,6 +21,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/diagnostico", diagnosticoRouter);
+app.use("/chatbot", chatbotRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);
 

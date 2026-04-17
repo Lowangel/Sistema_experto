@@ -1,4 +1,11 @@
 # Sistema Experto Medico con IA y Arbol Jerarquico
+# INTEGRANTES : 
+# Andres E. Leiva
+# Carlos A. Rivera
+# Marco A. Palma
+# Florisell Cruz
+# Angel J. Lagos
+# Elias  J. Caballero
 
 Proyecto full-stack con:
 
@@ -7,6 +14,14 @@ Proyecto full-stack con:
 - Frontend moderno en Flet
 - Flujo exportable de Node-RED con TensorFlow
 - Arbol jerarquico dinamico para el diagnostico
+
+# Sistema Experto Médico con IA y Árbol Jerárquico
+
+<div align="center">
+  <img src="Sistema.png" alt="Interfaz del Sistema Experto Médico con IA" width="85%">
+</div>
+
+
 
 ## Estructura
 

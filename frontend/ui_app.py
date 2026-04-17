@@ -39,6 +39,13 @@ INFO_BG = "#EAF6F4"
 INFO_TEXT = "#0E6B5A"
 INFO_BORDER = "#C9E8E0"
 
+CHAT_STARTERS = [
+    "Explicame que es la diabetes tipo 2 de forma sencilla",
+    "Que deberia vigilar si tengo dolor de pecho",
+    "Resumeme la hipertension en 5 puntos claros",
+    "Ayudame a redactar un mensaje formal para mi profesor",
+]
+
 SYMPTOMS = [
     "fiebre",
     "tos persistente",
@@ -145,6 +152,7 @@ class AppState:
     backend_ready: bool | None = None
     backend_note: str = "Verificando disponibilidad del backend..."
     backend_model: str = "-"
+    active_view: str = "diagnostico"
 
 
 def title_case(value: str) -> str:
@@ -168,12 +176,13 @@ def tone_palette(tone: str) -> tuple[str, str, str]:
     palettes = {
         "accent": (ACCENT_LIGHT, ACCENT_DARK, "#BFE6D9"),
         "success": (SUCCESS_BG, SUCCESS_TEXT, SUCCESS_BORDER),
-        "warning": (WARNING_BG, WARNING_TEXT, WARNING_BORDER),
+        "warning": ("#FFF4D6", WARNING_TEXT, "#F4D8A2"),
         "error": (ERROR_BG, ERROR_TEXT, ERROR_BORDER),
         "info": (INFO_BG, INFO_TEXT, INFO_BORDER),
         "dark": ("#123E36", "#FFFFFF", "#1D5C51"),
+        "white": ("#FFFFFF18", "#FFFFFF", "#FFFFFF2A"),
         "neutral": (SURFACE_MUTED, TEXT, BORDER),
-        "hero": ("#161313FF", "#070606", "#0F0E0EFF"),
+        "Ascent": ("#123E36", "#FFFFFF", "#0E0D0D17"),
     }
     return palettes.get(tone, palettes["neutral"])
 
@@ -365,6 +374,15 @@ def build_health_url(diagnostico_url: str) -> str:
     return urlunparse(parsed._replace(path="/health", params="", query="", fragment=""))
 
 
+def build_service_url(raw_url: str, path: str) -> str:
+    parsed = urlparse(normalize_backend_url(raw_url))
+    return urlunparse(parsed._replace(path=path, params="", query="", fragment=""))
+
+
+def build_chatbot_url(raw_url: str) -> str:
+    return build_service_url(raw_url, "/chatbot")
+
+
 def read_error_body(exc: error.HTTPError) -> str:
     raw = exc.read().decode("utf-8")
     try:
@@ -380,15 +398,15 @@ def fetch_backend_health(diagnostico_url: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def diagnose_connection_issue(diagnostico_url: str) -> str:
-    health_url = build_health_url(diagnostico_url)
+def diagnose_connection_issue(target_url: str, service_name: str = "el servicio") -> str:
+    health_url = build_health_url(target_url)
 
     try:
-        payload = fetch_backend_health(diagnostico_url)
+        payload = fetch_backend_health(target_url)
         if payload.get("ok"):
             return (
-                "El backend responde, pero la URL configurada para el diagnostico no es valida. "
-                f"Usa {diagnostico_url}"
+                f"El backend responde, pero la URL configurada para {service_name} no es valida. "
+                f"Usa {target_url}"
             )
     except error.HTTPError as exc:
         return f"El backend respondio con error en /health. Detalle: {read_error_body(exc)}"
@@ -402,11 +420,10 @@ def diagnose_connection_issue(diagnostico_url: str) -> str:
     )
 
 
-def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    normalized_url = normalize_backend_url(url)
+def post_json_to_url(url: str, payload: dict[str, Any], service_name: str = "el servicio") -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
-        normalized_url,
+        url,
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -424,7 +441,12 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         message = read_error_body(exc)
         raise RuntimeError(message) from exc
     except error.URLError as exc:
-        raise RuntimeError(diagnose_connection_issue(normalized_url)) from exc
+        raise RuntimeError(diagnose_connection_issue(url, service_name)) from exc
+
+
+def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    normalized_url = normalize_backend_url(url)
+    return post_json_to_url(normalized_url, payload, "el diagnostico")
 
 
 def leaf_node(label: str) -> dict[str, Any]:
@@ -513,6 +535,71 @@ def build_tree_control(node: dict[str, Any], level: int = 0) -> ft.Control:
     )
 
 
+def build_chat_message_card(
+    role: str,
+    content: str,
+    title: str,
+    subtitle: str,
+    icon: ft.Icons,
+) -> ft.Container:
+    is_user = role == "user"
+    bubble_bg = ACCENT if is_user else SURFACE
+    bubble_border = "#0D6B58" if is_user else BORDER
+    title_color = "#FFFFFF" if is_user else TEXT
+    subtitle_color = "#D9F5EE" if is_user else TEXT_MUTED
+    text_color = "#F8FFFC" if is_user else TEXT
+    icon_bg = "#FFFFFF22" if is_user else ACCENT_LIGHT
+    icon_color = "#FFFFFF" if is_user else ACCENT_DARK
+
+    return ft.Container(
+        padding=20,
+        border_radius=28,
+        bgcolor=bubble_bg,
+        border=ft.border.all(1, bubble_border),
+        shadow=CARD_SHADOW if not is_user else [],
+        content=ft.Column(
+            spacing=12,
+            controls=[
+                ft.Row(
+                    spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Container(
+                            width=42,
+                            height=42,
+                            border_radius=16,
+                            bgcolor=icon_bg,
+                            alignment=ft.Alignment(0, 0),
+                            content=ft.Icon(icon=icon, color=icon_color, size=20),
+                        ),
+                        ft.Column(
+                            spacing=2,
+                            controls=[
+                                ft.Text(
+                                    title,
+                                    size=15,
+                                    color=title_color,
+                                    weight=ft.FontWeight.W_700,
+                                ),
+                                ft.Text(
+                                    subtitle,
+                                    size=12,
+                                    color=subtitle_color,
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                ft.Text(
+                    content,
+                    size=14,
+                    color=text_color,
+                ),
+            ],
+        ),
+    )
+
+
 async def main(page: ft.Page) -> None:
     page.title = "Sistema Experto Medico con IA"
     page.padding = 0
@@ -524,23 +611,24 @@ async def main(page: ft.Page) -> None:
 
     state = AppState()
     symptom_chips: dict[str, ft.Chip] = {}
+    chat_history: list[dict[str, str]] = []
 
     selected_metric_value = ft.Text(
         "0",
         size=28,
-        color="#11100F",
+        color="#0A0909",
         weight=ft.FontWeight.BOLD,
     )
     backend_metric_value = ft.Text(
         "Verificando",
         size=20,
-        color="#11100F",
+        color="#0A0909",
         weight=ft.FontWeight.BOLD,
     )
     model_metric_value = ft.Text(
         "-",
         size=20,
-        color= "#11100F",
+        color="#0A0909",
         weight=ft.FontWeight.BOLD,
     )
 
@@ -665,6 +753,31 @@ async def main(page: ft.Page) -> None:
     symptom_chip_grid = ft.Row(wrap=True, spacing=10, run_spacing=10)
     quick_case_row = ft.Row(wrap=True, spacing=10, run_spacing=10)
     loading_ring = ft.ProgressRing(width=18, height=18, stroke_width=2, visible=False, color=ACCENT)
+    chat_loading_ring = ft.ProgressRing(width=18, height=18, stroke_width=2, visible=False, color=ACCENT)
+    chat_status_text = ft.Text(
+        "Abre una conversacion libre con la IA usando el mismo backend.",
+        size=13,
+        color=TEXT_MUTED,
+    )
+    chat_meta_row = ft.Row(wrap=True, spacing=8, run_spacing=8)
+    chat_suggestions_row = ft.Row(wrap=True, spacing=10, run_spacing=10)
+    chat_message_list = ft.ListView(spacing=14, auto_scroll=True, expand=True)
+    chat_count_value = ft.Text("0", size=28, color="#0A0A0A", weight=ft.FontWeight.BOLD)
+    chat_mode_value = ft.Text("Listo", size=20, color="#0C0C0C", weight=ft.FontWeight.BOLD)
+    chat_model_value = ft.Text("-", size=20, color="#080808", weight=ft.FontWeight.BOLD)
+    chat_input = ft.TextField(
+        label="Escribe tu mensaje",
+        hint_text="Pregunta cualquier cosa: salud, estudio, ideas, tecnologia o apoyo para redactar.",
+        multiline=True,
+        min_lines=2,
+        max_lines=5,
+        border_radius=20,
+        filled=True,
+        fill_color=SURFACE_MUTED,
+        border_color=BORDER,
+        focused_border_color=ACCENT,
+        content_padding=ft.padding.symmetric(horizontal=16, vertical=16),
+    )
 
     def build_hero_metric(icon: ft.Icons, label: str, value_control: ft.Text) -> ft.Container:
         return ft.Container(
@@ -678,11 +791,11 @@ async def main(page: ft.Page) -> None:
                     ft.Row(
                         spacing=8,
                         controls=[
-                            ft.Icon(icon=icon, color="#131212", size=18),
+                            ft.Icon(icon=icon, color="#000000", size=18),
                             ft.Text(
                                 label,
                                 size=12,
-                                color="#0D0E0D",
+                                color="#000000",
                                 weight=ft.FontWeight.W_600,
                             ),
                         ],
@@ -740,11 +853,35 @@ async def main(page: ft.Page) -> None:
                                             wrap=True,
                                             spacing=10,
                                             run_spacing=10,
+                                            controls=[
+                                                ft.ElevatedButton(
+                                                    "Abrir Chat IA",
+                                                    icon=ft.Icons.FORUM_ROUNDED,
+                                                    height=48,
+                                                    style=ft.ButtonStyle(
+                                                        bgcolor="#FFFFFF",
+                                                        color=ACCENT_DARK,
+                                                        shape=ft.RoundedRectangleBorder(radius=18),
+                                                        padding=ft.padding.symmetric(horizontal=18, vertical=16),
+                                                    ),
+                                                    on_click=lambda _event: (set_active_view("chat"), page.update()),
+                                                ),
+                                                build_pill(
+                                                    "Explora preguntas abiertas sin salir de la app",
+                                                    tone="Ascent",
+                                                    icon=ft.Icons.AUTO_AWESOME_ROUNDED,
+                                                ),
+                                            ],
+                                        ),
+                                        ft.Row(
+                                            wrap=True,
+                                            spacing=10,
+                                            run_spacing=10,
                                             
                                             controls=[
-                                                build_pill("Casos rapidos", tone= "White", icon=ft.Icons.BOLT_ROUNDED),
-                                                build_pill("Respuesta estructurada", tone="White", icon=ft.Icons.DATA_OBJECT_ROUNDED),
-                                                build_pill("Arbol interactivo", tone="White", icon=ft.Icons.ACCOUNT_TREE_ROUNDED),
+                                                build_pill("Casos rapidos", tone="Ascent", icon=ft.Icons.BOLT_ROUNDED),
+                                                build_pill("Respuesta estructurada", tone="Ascent", icon=ft.Icons.DATA_OBJECT_ROUNDED),
+                                                build_pill("Arbol interactivo", tone="Ascent", icon=ft.Icons.ACCOUNT_TREE_ROUNDED),
                                             ],
                                         ),
                                     ],
@@ -823,6 +960,116 @@ async def main(page: ft.Page) -> None:
         backend_note_text.value = note
         backend_model_label.value = f"Modelo backend: {state.backend_model}"
         model_metric_value.value = state.backend_model
+        chat_model_value.value = state.backend_model
+        refresh_chat_overview()
+
+    def refresh_chat_overview(mode: str | None = None, model: str | None = None, fallback: bool = False) -> None:
+        current_model = model or state.backend_model or "-"
+        chat_count_value.value = str(len(chat_history))
+        if mode is not None:
+            chat_mode_value.value = mode
+        chat_model_value.value = current_model
+
+        backend_tone = (
+            "success"
+            if state.backend_ready is True
+            else "error"
+            if state.backend_ready is False
+            else "neutral"
+        )
+        model_tone = "warning" if fallback or current_model == "copiloto-local" else "accent"
+
+        chat_meta_row.controls = [
+            build_pill("Ruta: /chatbot", tone="neutral", icon=ft.Icons.LINK_ROUNDED),
+            build_pill(
+                f"Modelo: {current_model}",
+                tone=model_tone,
+                icon=ft.Icons.AUTO_AWESOME_ROUNDED,
+            ),
+            build_pill(
+                f"Host: {build_chatbot_url(backend_url_field.value)}",
+                tone="neutral",
+                icon=ft.Icons.ROUTER_ROUNDED,
+            ),
+            build_pill(
+                "Backend operativo" if state.backend_ready else "Backend pendiente",
+                tone=backend_tone,
+                icon=ft.Icons.CLOUD_DONE_ROUNDED
+                if state.backend_ready
+                else ft.Icons.CLOUD_SYNC_ROUNDED
+                if state.backend_ready is None
+                else ft.Icons.CLOUD_OFF_ROUNDED,
+            ),
+        ]
+
+    def push_chat_message(
+        role: str,
+        content: str,
+        *,
+        title: str | None = None,
+        subtitle: str | None = None,
+        remember: bool = True,
+    ) -> None:
+        final_title = title or ("Tu mensaje" if role == "user" else "Copiloto IA")
+        final_subtitle = subtitle or (
+            "Listo para seguir conversando"
+            if role != "user"
+            else "Consulta enviada al backend"
+        )
+        final_icon = (
+            ft.Icons.PERSON_ROUNDED if role == "user" else ft.Icons.PSYCHOLOGY_ALT_ROUNDED
+        )
+
+        if remember:
+            chat_history.append({"role": role, "content": content})
+
+        chat_message_list.controls.append(
+            build_chat_message_card(
+                role,
+                content,
+                final_title,
+                final_subtitle,
+                final_icon,
+            )
+        )
+        refresh_chat_overview()
+
+    def set_chat_suggestions(prompts: list[str]) -> None:
+        clean_prompts = [item.strip() for item in prompts if item.strip()]
+        if not clean_prompts:
+            clean_prompts = CHAT_STARTERS
+
+        chat_suggestions_row.controls = [
+            ft.Chip(
+                label=prompt,
+                leading=ft.Icon(
+                    icon=ft.Icons.BOLT_ROUNDED,
+                    color=ACCENT_DARK,
+                    size=16,
+                ),
+                bgcolor=ACCENT_SOFT,
+                color="FFFFFF",
+                on_click=lambda _event, prompt=prompt: page.run_task(
+                    submit_chat_message,
+                    None,
+                    prompt,
+                ),
+            )
+            for prompt in clean_prompts[:4]
+        ]
+
+    def seed_chat_thread() -> None:
+        chat_history.clear()
+        chat_message_list.controls.clear()
+        push_chat_message(
+            "assistant",
+            "Estoy listo para ayudarte con preguntas medicas educativas o consultas generales. Puedes pedirme explicaciones, comparaciones, resúmenes, ideas o ayuda para redactar.",
+            title="Copiloto IA libre",
+            subtitle="Conectado al mismo backend de la app",
+        )
+        chat_status_text.value = "El chat esta listo. Usa una sugerencia rapida o escribe una pregunta propia."
+        set_chat_suggestions(CHAT_STARTERS)
+        refresh_chat_overview(mode="Listo", model=state.backend_model)
 
     def render_result(result: dict[str, Any]) -> None:
         meta = result.get("meta", {})
@@ -921,6 +1168,12 @@ async def main(page: ft.Page) -> None:
         set_feedback("Formulario restablecido. Listo para un nuevo caso.", tone="info")
         page.update()
 
+    def clear_chat_thread(_: ft.ControlEvent | None = None) -> None:
+        seed_chat_thread()
+        chat_input.value = ""
+        chat_status_text.value = "Conversacion reiniciada. Listo para una nueva consulta."
+        page.update()
+
     def on_symptom_select(_: ft.ControlEvent) -> None:
         refresh_selected_preview()
         page.update()
@@ -935,7 +1188,7 @@ async def main(page: ft.Page) -> None:
             selected_color=ACCENT_LIGHT,
             elevation=0,
             elevation_on_click=0,
-            color="#FFFFFF",
+            color="#FDFFFF",
             on_select=on_symptom_select,
         )
         symptom_chips[symptom] = chip
@@ -947,7 +1200,7 @@ async def main(page: ft.Page) -> None:
                 label=quick_case["label"],
                 leading=ft.Icon(icon=ft.Icons.BOLT_ROUNDED, color=ACCENT_DARK, size=16),
                 bgcolor=ACCENT_SOFT,
-                color= "#FFFFFF",
+                color= "#FDFFFF",
                 on_click=lambda _event, case=quick_case: select_case(case),
             )
         )
@@ -1137,8 +1390,226 @@ async def main(page: ft.Page) -> None:
         ),
     )
 
-    layout = ft.Container(
-        padding=26,
+    chat_send_button = ft.ElevatedButton(
+        "Enviar al copiloto",
+        icon=ft.Icons.SEND_ROUNDED,
+        height=52,
+        style=ft.ButtonStyle(
+            bgcolor=ACCENT,
+            color="#FFFFFF",
+            shape=ft.RoundedRectangleBorder(radius=18),
+            padding=ft.padding.symmetric(horizontal=20, vertical=18),
+        ),
+    )
+    chat_reset_button = ft.ElevatedButton(
+        "Nueva charla",
+        icon=ft.Icons.REFRESH_ROUNDED,
+        height=52,
+        style=ft.ButtonStyle(
+            bgcolor=SURFACE_MUTED,
+            color=TEXT,
+            shape=ft.RoundedRectangleBorder(radius=18),
+            padding=ft.padding.symmetric(horizontal=18, vertical=18),
+        ),
+        on_click=clear_chat_thread,
+    )
+    diagnosis_nav_button = ft.ElevatedButton(
+        "Diagnostico",
+        icon=ft.Icons.MONITOR_HEART_ROUNDED,
+        height=48,
+    )
+    chat_nav_button = ft.ElevatedButton(
+        "Chat IA",
+        icon=ft.Icons.FORUM_ROUNDED,
+        height=48,
+    )
+    active_view_holder = ft.Container()
+
+    navigation_bar = ft.Container(
+        margin=ft.margin.only(bottom=16),
+        padding=20,
+        border_radius=28,
+        bgcolor=SURFACE,
+        border=ft.border.all(1, BORDER),
+        shadow=CARD_SHADOW,
+        content=ft.Row(
+            wrap=True,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Row(
+                    wrap=True,
+                    spacing=10,
+                    run_spacing=10,
+                    controls=[diagnosis_nav_button, chat_nav_button],
+                ),
+                ft.Row(
+                    wrap=True,
+                    spacing=10,
+                    run_spacing=10,
+                    controls=[
+                        active_view_holder,
+                        build_pill("Backend unificado", tone="info", icon=ft.Icons.HUB_ROUNDED),
+                    ],
+                ),
+            ],
+        ),
+    )
+
+    chat_hero = ft.Container(
+        margin=ft.margin.only(bottom=20),
+        border_radius=34,
+        gradient=ft.LinearGradient(
+            colors=["#0C4F63", "#0C7867", "#0A3F49"],
+            begin=ft.Alignment(-1, -1),
+            end=ft.Alignment(1, 1),
+        ),
+        shadow=CARD_SHADOW,
+        content=ft.Stack(
+            clip_behavior=ft.ClipBehavior.NONE,
+            controls=[
+                ft.Container(width=240, height=240, right=-40, top=-70, border_radius=240, bgcolor="#FFFFFF14"),
+                ft.Container(width=200, height=200, left=-45, bottom=-75, border_radius=200, bgcolor="#8EEBD31C"),
+                ft.Container(
+                    padding=32,
+                    content=ft.ResponsiveRow(
+                        columns=12,
+                        controls=[
+                            ft.Container(
+                                col={"xs": 12, "lg": 7},
+                                content=ft.Column(
+                                    spacing=18,
+                                    controls=[
+                                        ft.Row(
+                                            wrap=True,
+                                            spacing=10,
+                                            run_spacing=10,
+                                            controls=[
+                                                build_pill("Copiloto creativo", tone="dark", icon=ft.Icons.PSYCHOLOGY_ALT_ROUNDED),
+                                                build_pill("Consultas abiertas", tone="white", icon=ft.Icons.AUTO_AWESOME_ROUNDED),
+                                            ],
+                                        ),
+                                        ft.Text(
+                                            "Chat IA libre",
+                                            size=44,
+                                            color="#FFFFFF",
+                                            weight=ft.FontWeight.BOLD,
+                                        ),
+                                        ft.Text(
+                                            "Una segunda pantalla para conversar con la IA sobre salud, estudio, escritura o cualquier duda puntual sin salir de tu misma app.",
+                                            size=16,
+                                            color="#D7FAF2",
+                                        ),
+                                        ft.Row(
+                                            wrap=True,
+                                            spacing=10,
+                                            run_spacing=10,
+                                            controls=[
+                                                build_pill("Prompts rapidos", tone="Ascent", icon=ft.Icons.BOLT_ROUNDED),
+                                                build_pill("Memoria breve", tone="Ascent", icon=ft.Icons.HISTORY_ROUNDED),
+                                                build_pill("Mismo backend", tone="Ascent", icon=ft.Icons.ROUTER_ROUNDED),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                            ),
+                            ft.Container(
+                                col={"xs": 12, "lg": 5},
+                                content=ft.Column(
+                                    spacing=12,
+                                    controls=[
+                                        build_hero_metric(ft.Icons.CHAT_BUBBLE_ROUNDED, "Mensajes", chat_count_value),
+                                        build_hero_metric(ft.Icons.BOLT_ROUNDED, "Estado del chat", chat_mode_value),
+                                        build_hero_metric(ft.Icons.AUTO_AWESOME_ROUNDED, "Modelo usado", chat_model_value),
+                                    ],
+                                ),
+                            ),
+                        ],
+                    ),
+                ),
+            ],
+        ),
+    )
+
+    chat_lab_card = build_card(
+        "Mesa de prompts",
+        "Atajos para iniciar conversaciones utiles sin escribir desde cero.",
+        ft.Icons.LIGHTBULB_OUTLINE_ROUNDED,
+        ft.Column(
+            spacing=18,
+            controls=[
+                ft.Text(
+                    "Sugerencias listas para lanzar",
+                    size=15,
+                    color=TEXT,
+                    weight=ft.FontWeight.W_700,
+                ),
+                chat_suggestions_row,
+                ft.Divider(height=1, color=BORDER),
+                ft.Container(
+                    padding=18,
+                    border_radius=22,
+                    bgcolor=SURFACE_MUTED,
+                    border=ft.border.all(1, BORDER),
+                    content=ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.Text(
+                                "Estado de la conversacion",
+                                size=13,
+                                color=TEXT_MUTED,
+                                weight=ft.FontWeight.W_700,
+                            ),
+                            chat_status_text,
+                        ],
+                    ),
+                ),
+                ft.Row(
+                    wrap=True,
+                    spacing=10,
+                    run_spacing=10,
+                    controls=[
+                        chat_reset_button,
+                        build_pill(
+                            "Comparte la URL base con Diagnostico",
+                            tone="neutral",
+                            icon=ft.Icons.LINK_ROUNDED,
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    )
+
+    chat_thread_card = build_card(
+        "Conversacion",
+        "Tus mensajes y las respuestas del asistente aparecen aqui en una vista tipo consola premium.",
+        ft.Icons.FORUM_ROUNDED,
+        ft.Column(
+            spacing=18,
+            controls=[
+                ft.Container(
+                    height=560,
+                    padding=18,
+                    border_radius=24,
+                    bgcolor=SURFACE_MUTED,
+                    border=ft.border.all(1, BORDER),
+                    content=chat_message_list,
+                ),
+                chat_meta_row,
+                chat_input,
+                ft.Row(
+                    wrap=True,
+                    spacing=12,
+                    run_spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[chat_send_button, chat_loading_ring],
+                ),
+            ],
+        ),
+    )
+
+    diagnosis_view = ft.Container(
         content=ft.Column(
             spacing=18,
             controls=[
@@ -1152,6 +1623,62 @@ async def main(page: ft.Page) -> None:
                         ft.Container(col={"xs": 12, "lg": 7}, content=ft.Column(spacing=18, controls=[result_card, plan_card, explanation_card, tree_card])),
                     ],
                 ),
+            ],
+        )
+    )
+
+    chat_view = ft.Container(
+        visible=False,
+        content=ft.Column(
+            spacing=18,
+            controls=[
+                chat_hero,
+                ft.ResponsiveRow(
+                    columns=12,
+                    run_spacing=18,
+                    controls=[
+                        ft.Container(col={"xs": 12, "lg": 4}, content=chat_lab_card),
+                        ft.Container(col={"xs": 12, "lg": 8}, content=chat_thread_card),
+                    ],
+                ),
+            ],
+        ),
+    )
+
+    def set_active_view(view_name: str) -> None:
+        state.active_view = view_name
+        diagnosis_view.visible = view_name == "diagnostico"
+        chat_view.visible = view_name == "chat"
+
+        diagnosis_nav_button.style = ft.ButtonStyle(
+            bgcolor=ACCENT if view_name == "diagnostico" else SURFACE_MUTED,
+            color="#FFFFFF" if view_name == "diagnostico" else TEXT,
+            shape=ft.RoundedRectangleBorder(radius=18),
+            padding=ft.padding.symmetric(horizontal=18, vertical=16),
+        )
+        chat_nav_button.style = ft.ButtonStyle(
+            bgcolor=ACCENT if view_name == "chat" else SURFACE_MUTED,
+            color="#FFFFFF" if view_name == "chat" else TEXT,
+            shape=ft.RoundedRectangleBorder(radius=18),
+            padding=ft.padding.symmetric(horizontal=18, vertical=16),
+        )
+        active_view_holder.content = build_pill(
+            "Vista activa: Chat IA" if view_name == "chat" else "Vista activa: Diagnostico",
+            tone="accent" if view_name == "chat" else "info",
+            icon=ft.Icons.FORUM_ROUNDED if view_name == "chat" else ft.Icons.MONITOR_HEART_ROUNDED,
+        )
+
+    diagnosis_nav_button.on_click = lambda _event: (set_active_view("diagnostico"), page.update())
+    chat_nav_button.on_click = lambda _event: (set_active_view("chat"), page.update())
+
+    layout = ft.Container(
+        padding=26,
+        content=ft.Column(
+            spacing=18,
+            controls=[
+                navigation_bar,
+                diagnosis_view,
+                chat_view,
             ],
         ),
     )
@@ -1210,11 +1737,93 @@ async def main(page: ft.Page) -> None:
             state.loading = False
             page.update()
 
+    async def submit_chat_message(
+        _: ft.ControlEvent | None = None,
+        quick_prompt: str | None = None,
+    ) -> None:
+        outgoing_message = (quick_prompt or chat_input.value or "").strip()
+
+        if not outgoing_message:
+            chat_status_text.value = "Escribe una pregunta antes de consultar el chat."
+            page.update()
+            return
+
+        normalized_url = normalize_backend_url(backend_url_field.value)
+        backend_url_field.value = normalized_url
+        history_snapshot = chat_history[-8:]
+
+        push_chat_message(
+            "user",
+            outgoing_message,
+            subtitle="Consulta enviada al copiloto conversacional",
+        )
+        chat_input.value = ""
+        chat_loading_ring.visible = True
+        chat_send_button.disabled = True
+        chat_reset_button.disabled = True
+        chat_status_text.value = "Consultando al copiloto IA..."
+        refresh_chat_overview(mode="Consultando", model=state.backend_model)
+        set_active_view("chat")
+        page.update()
+
+        try:
+            result = await asyncio.to_thread(
+                post_json_to_url,
+                build_chatbot_url(normalized_url),
+                {
+                    "mensaje": outgoing_message,
+                    "historial": history_snapshot,
+                },
+                "el chat IA",
+            )
+
+            if not isinstance(result, dict) or not result.get("ok"):
+                raise RuntimeError("La respuesta del chat no contiene un resultado valido.")
+
+            meta = result.get("meta", {})
+            model = meta.get("modelo", state.backend_model)
+            fallback = bool(meta.get("fallback"))
+            timestamp = format_timestamp(meta.get("timestamp"))
+            title = "Copiloto local" if fallback else "Copiloto IA"
+
+            push_chat_message(
+                "assistant",
+                result.get("reply", "No se recibio respuesta del chat."),
+                title=title,
+                subtitle=f"{model} | {timestamp}",
+            )
+            set_chat_suggestions(result.get("suggestions", []))
+            chat_status_text.value = "Respuesta lista. Puedes seguir la conversacion o usar una sugerencia."
+            refresh_chat_overview(
+                mode="Fallback local" if fallback else "En linea",
+                model=model,
+                fallback=fallback,
+            )
+        except Exception as exc:
+            push_chat_message(
+                "assistant",
+                str(exc),
+                title="No fue posible responder",
+                subtitle="Ocurrio un problema procesando tu mensaje",
+                remember=False,
+            )
+            chat_status_text.value = f"Hubo un problema consultando el chat: {exc}"
+            refresh_chat_overview(mode="Error", model=state.backend_model, fallback=True)
+        finally:
+            chat_loading_ring.visible = False
+            chat_send_button.disabled = False
+            chat_reset_button.disabled = False
+            page.update()
+
     analyze_button.on_click = submit_diagnosis
+    chat_send_button.on_click = submit_chat_message
+    chat_input.on_submit = submit_chat_message
 
     refresh_selected_preview()
     reset_result_view()
     set_backend_status(None, "Verificando disponibilidad del backend...", "-")
+    seed_chat_thread()
+    set_active_view("diagnostico")
 
     page.add(ft.SafeArea(content=layout))
     page.run_task(refresh_backend_status)
